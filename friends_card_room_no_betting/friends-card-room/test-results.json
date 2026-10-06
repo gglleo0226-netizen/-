@@ -1,28 +1,74 @@
 {
-  "project": "friends-card-room",
-  "version": "1.0.0",
-  "nodeTest": {
-    "passed": 53,
-    "failed": 0
+  "version": "2.0.0",
+  "verified_date": "2026-10-06",
+  "environment": {
+    "node": "22.16.0",
+    "npm": "10.9.2"
   },
-  "fiveCardEnumeration": {
-    "hands": 2598960,
-    "passed": true
+  "automated_tests": {
+    "total": 97,
+    "passed": 97,
+    "failed": 0,
+    "skipped": 0
   },
-  "browserHarness": {
-    "passed": 8,
+  "random_hands": {
+    "count": 1000,
+    "seeded": true,
+    "included_in_automated_tests": true,
     "checks": [
-      "Isolated desktop and mobile browser UI: create, invite, pending approval, join",
-      "Nine real backend sessions receive recipient-filtered private cards",
-      "1440px desktop and 390px mobile render with no horizontal overflow",
-      "Recreated browser page with retained session token restores the same hand and seat",
-      "Pause and resume work through UI without losing acknowledgements",
-      "Nine-player showdown displays player names, hand categories and best five cards",
-      "Host settings form changes server-side mode and timer",
-      "360px home screen fits viewport"
-    ],
-    "errors": [],
-    "scope": "Chromium UI loaded via set_content; fetch bridged to a real local Node HTTP server because managed-browser URL navigation is disabled. Real remote deployment and native browser localStorage/network were not tested."
+      "termination",
+      "nonnegative_integer_stacks",
+      "chip_conservation"
+    ]
   },
-  "renderDeployed": false
+  "five_card_exhaustive": {
+    "total": 2598960,
+    "passed": true,
+    "counts": [
+      1302540,
+      1098240,
+      123552,
+      54912,
+      10200,
+      5108,
+      3744,
+      624,
+      40
+    ]
+  },
+  "browser": {
+    "type": "Chromium DOM/UI test with API bridge; no external site deployment",
+    "errors": [],
+    "viewportChecks": [
+      {
+        "inner": 1365,
+        "scroll": 1365
+      },
+      {
+        "inner": 390,
+        "scroll": 390
+      },
+      {
+        "inner": 1000,
+        "scroll": 1000
+      }
+    ],
+    "verified": [
+      "raise form",
+      "fold dialog",
+      "call/check",
+      "showdown",
+      "settings",
+      "free reset"
+    ],
+    "screenshots": [
+      "table_mobile.png",
+      "results_desktop.png",
+      "betting_desktop.png",
+      "table_desktop.png",
+      "betting_mobile.png"
+    ]
+  },
+  "external_render_deployment_tested": false,
+  "production_state_changed": false
 }

@@ -1,6 +1,8 @@
 import { randomBytes, randomInt, createHash, timingSafeEqual } from 'node:crypto';
 import { shuffledDeck, evaluate, compareScores } from './cards.mjs';
+import { createHand, actHand, abandonHand, legalActions, potTotal, potLayers } from './holdem.mjs';
 
+const IN_HAND = ['private', 'flop', 'turn', 'river'];
 const PHASES = ['private', 'flop', 'turn', 'river', 'showdown'];
 const LABELS = { private: '개인 카드', flop: '플롭', turn: '턴', river: '리버', showdown: '결과' };
 export const ONLINE_MS = 35_000;
@@ -47,7 +49,7 @@ export class GameStore {
     const player = {
       id: key().slice(0, 16), name, status, seat: null, ready: false, sitOut: false,
       online: true, lastSeen: this.now(), joinedAt: this.now(),
-      stats: { played: 0, wins: 0, ties: 0 }, tokenHash: digest(token), seenActions: new Map()
+      stack: room.initialStack, stats: { played: 0, wins: 0, ties: 0 }, tokenHash: digest(token), seenActions: new Map()
     };
     room.players.push(player);
     this.sessions.set(player.tokenHash, { roomId: room.id, playerId: player.id });
@@ -61,11 +63,17 @@ export class GameStore {
     const maxPlayers = integer(input.maxPlayers ?? 6, 2, 9, '정원');
     fail(['ready', 'timed'].includes(input.mode ?? 'ready'), '진행 방식이 올바르지 않습니다.');
     const seconds = integer(input.seconds ?? 10, 5, 60, '공개 간격');
+    const gameType = input.gameType ?? 'compare';
+    fail(['compare','holdem'].includes(gameType), '게임 방식이 올바르지 않습니다.');
+    const initialStack = integer(input.initialStack ?? 2000, 1, 1000000, '초기 스택');
+    const sb = integer(input.sb ?? 10, 1, 100000, 'SB');
+    const bb = integer(input.bb ?? 20, sb, 100000, 'BB');
+    const actionSeconds = integer(input.actionSeconds ?? 30, 10, 120, '행동 제한시간');
     let id;
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     do { id = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join(''); } while (this.rooms.has(id));
     const room = {
-      id, title, maxPlayers, mode: input.mode ?? 'ready', seconds, autoNext: Boolean(input.autoNext),
+      id, title, maxPlayers, gameType, initialStack, sb, bb, actionSeconds, mode: input.mode ?? 'ready', seconds, autoNext: Boolean(input.autoNext),
       invite: key(), players: [], hostId: null, hand: null, round: 0, dealerSeat: -1,
       phase: 'lobby', locked: false, paused: false, remaining: null,
       deadline: null, nextRoundAt: null, revision: 0, log: [], history: [], updatedAt: this.now()
@@ -104,7 +112,7 @@ export class GameStore {
     if (!player.online) { player.online = true; this.notify(room); }
   }
   eligible(room) {
-    return room.players.filter(p => p.status === 'approved' && !p.sitOut && p.online).sort((a, b) => a.seat - b.seat);
+    return room.players.filter(p => p.status === 'approved' && !p.sitOut && p.online && (room.gameType !== 'holdem' || p.stack > 0)).sort((a, b) => a.seat - b.seat);
   }
   readyForNext(room) { const ps = this.eligible(room); return ps.length >= 2 && ps.every(p => p.ready); }
   host(room, player) { fail(player.id === room.hostId, '방장만 사용할 수 있는 기능입니다.', 403); }
@@ -119,10 +127,26 @@ export class GameStore {
     // Remove former members only when no current round refers to them anymore.
     room.players = room.players.filter(p => ['approved', 'pending'].includes(p.status));
     const dealer = room.dealerSeat < 0 ? ps[randomInt(ps.length)] : ps.find(p => p.seat > room.dealerSeat) || ps[0];
-    room.dealerSeat = dealer.seat;
+    // In the 3-to-2 transition avoid assigning the previous BB the BB twice.
+    let chosenDealer = dealer;
+    if (room.gameType === 'holdem' && ps.length === 2 && room.hand?.bbSeat !== undefined) {
+      const previousBB = ps.find(p => p.seat === room.hand.bbSeat);
+      if (previousBB) chosenDealer = previousBB;
+    }
+    room.dealerSeat = chosenDealer.seat;
+    if (room.gameType === 'holdem') {
+      room.round++;
+      room.hand = createHand(ps, {dealerSeat:room.dealerSeat, sb:room.sb, bb:room.bb});
+      Object.assign(room.hand, {id:key().slice(0,16), number:room.round, acknowledged:new Set()});
+      for (const p of room.players) p.ready=false;
+      room.nextRoundAt=null;
+      this.log(room, `${room.round}핸드 시작 · ${ps.length}명 · 가상 칩 전용`);
+      this.syncPoker(room);
+      return;
+    }
     const ordered = [...ps.filter(p => p.seat > dealer.seat), ...ps.filter(p => p.seat <= dealer.seat)];
     const deck = shuffledDeck();
-    const participants = ps.map(p => ({ id: p.id, name: p.name, seat: p.seat, cards: [] }));
+    const participants = ps.map(p => ({ id: p.id, name: p.name, seat: p.seat, cards: [], folded:false }));
     for (let pass = 0; pass < 2; pass++) for (const p of ordered) participants.find(x => x.id === p.id).cards.push(deck.pop());
     deck.pop(); const board = [deck.pop(), deck.pop(), deck.pop()];
     deck.pop(); board.push(deck.pop()); deck.pop(); board.push(deck.pop());
@@ -136,9 +160,10 @@ export class GameStore {
     this.log(room, `${room.round}라운드 시작 · ${ps.length}명 · D ${dealer.name}`);
   }
   canAdvance(room) {
+    if (room.gameType === 'holdem') return false;
     return room.hand?.participants.every(h => {
       const p = room.players.find(p => p.id === h.id);
-      return !p || p.status !== 'approved' || !p.online || room.hand.acknowledged.has(p.id);
+      return h.folded || !p || p.status !== 'approved' || !p.online || room.hand.acknowledged.has(p.id);
     });
   }
   advance(room) {
@@ -147,37 +172,81 @@ export class GameStore {
     room.hand.acknowledged.clear();
     room.deadline = room.mode === 'timed' && !room.paused ? this.now() + room.seconds * 1000 : null;
     this.log(room, `${room.round}라운드 · ${LABELS[room.phase]} 공개`);
-    if (room.phase === 'showdown') {
-      room.deadline = null;
-      const results = room.hand.participants.map(p => {
-        const evaluated = evaluate([...p.cards, ...room.hand.board]);
-        return { id: p.id, name: p.name, cards: [...p.cards], handName: evaluated.name, score: evaluated.score, bestCards: evaluated.bestCards };
-      });
-      results.sort((a, b) => compareScores(b.score, a.score) || a.name.localeCompare(b.name, 'ko'));
-      const top = results[0].score;
-      const winners = results.filter(r => compareScores(r.score, top) === 0);
-      for (const result of results) {
-        result.winner = winners.some(w => w.id === result.id);
-        const p = room.players.find(p => p.id === result.id);
-        if (p) {
-          p.stats.played++;
-          if (result.winner) p.stats[winners.length > 1 ? 'ties' : 'wins']++;
-        }
-      }
-      room.hand.results = results;
-      room.history.unshift({ round: room.round, at: this.now(), board: [...room.hand.board], results: structuredClone(results) });
-      room.history = room.history.slice(0, 30);
-      for (const p of room.players) p.ready = false;
-      room.nextRoundAt = room.autoNext && room.mode === 'timed' && !room.paused ? this.now() + 12_000 : null;
-      this.log(room, `${winners.map(p => p.name).join(', ')} · ${winners.length > 1 ? '공동 승리' : '승리'}`);
+    if (room.phase === 'showdown') this.finishCompare(room, false);
+  }
+  finishCompare(room, early = false) {
+    const h = room.hand;
+    if (h.recorded) return;
+    h.recorded=true;
+    const shown={private:0,flop:3,turn:4,river:5,showdown:5}[room.phase];
+    h.shown=shown; h.ending=early?'folds':'showdown'; room.phase='showdown'; room.deadline=null;
+    const alive=h.participants.filter(p=>!p.folded);
+    const results=alive.map(p=>{
+      const e=early?{name:'다른 참가자 폴드로 승리',score:[],bestCards:[]}:evaluate([...p.cards,...h.board]);
+      return {id:p.id,name:p.name,cards:early?[]:[...p.cards],handName:e.name,score:e.score,bestCards:e.bestCards,folded:false};
+    }).sort((a,b)=>compareScores(b.score,a.score));
+    const best=results[0]?.score || [];
+    for (const r of results) r.winner=compareScores(r.score,best)===0;
+    results.push(...h.participants.filter(p=>p.folded).map(p=>({id:p.id,name:p.name,cards:[],bestCards:[],score:[],handName:'폴드',folded:true,winner:false})));
+    h.results=results;
+    this.recordHand(room);
+    room.nextRoundAt=room.autoNext && room.mode==='timed' && !room.paused ? this.now()+12000:null;
+    this.log(room, `${results.filter(r=>r.winner).map(r=>r.name).join(', ')} · 승리`);
+  }
+  recordHand(room) {
+    const results=room.hand.results;
+    const winners=results.filter(r=>r.winner);
+    for (const result of results) {
+      const p=room.players.find(p=>p.id===result.id);
+      if (p) { p.stats.played++; if(result.winner) p.stats[(room.gameType==='holdem'?result.sharedWin:winners.length>1)?'ties':'wins']++; }
+    }
+    room.history.unshift({round:room.round,at:this.now(),board:room.hand.board.slice(0,room.hand.shown ?? 5),
+      results:structuredClone(results), pots:structuredClone(room.hand.pots || []), refunds:structuredClone(room.hand.refunds || [])});
+    room.history=room.history.slice(0,30);
+    for (const p of room.players) p.ready=false;
+  }
+  syncPoker(room, resetClock = true) {
+    const h=room.hand;
+    room.phase=h.phase;
+    for (const p of room.players) { const hp=h.participants.find(x=>x.id===p.id); if(hp) p.stack=hp.stack; }
+    for (const message of h.events.splice(0)) this.log(room,message);
+    if(h.finished) {
+      room.deadline=room.nextRoundAt=null;
+      if(!h.recorded) { h.recorded=true; this.recordHand(room); }
+    } else if(resetClock) {
+      room.deadline=room.paused?null:this.now()+room.actionSeconds*1000;
+      if(room.paused) room.remaining=room.actionSeconds*1000;
     }
   }
+  foldCompare(room, player) {
+    const h=room.hand.participants.find(p=>p.id===player.id);
+    fail(h && !h.folded, '이번 라운드에 참여 중인 경우에만 폴드할 수 있습니다.');
+    h.folded=true; room.hand.acknowledged.delete(player.id);
+    this.log(room, `${player.name} · 폴드`);
+    if(room.hand.participants.filter(p=>!p.folded).length===1) this.finishCompare(room,true);
+    else this.progress(room);
+  }
+
   progress(room) {
     if (room.paused) return;
+    if (room.gameType === 'holdem') {
+      if(room.phase==='showdown' && room.autoNext && this.readyForNext(room)) this.start(room);
+      return;
+    }
     if (['private', 'flop', 'turn', 'river'].includes(room.phase) && this.canAdvance(room)) this.advance(room);
     else if (room.phase === 'showdown' && room.autoNext && this.readyForNext(room)) this.start(room);
   }
   revoke(room, player, status) {
+    if (IN_HAND.includes(room.phase) && room.hand?.participants.some(p=>p.id===player.id)) {
+      if(room.gameType==='holdem') {
+        const actor=room.hand.actorId;
+        abandonHand(room.hand,player.id); this.syncPoker(room, actor!==room.hand.actorId);
+      } else if(!room.hand.participants.find(p=>p.id===player.id).folded) {
+        // Do not auto-start another round until the departing player is revoked.
+        const wasAuto=room.autoNext; room.autoNext=false;
+        this.foldCompare(room,player); room.autoNext=wasAuto;
+      }
+    }
     player.status = status;
     this.sessions.delete(player.tokenHash);
     player.ready = false;
@@ -235,13 +304,39 @@ export class GameStore {
         this.guardHand(room, input);
         fail(['lobby', 'showdown'].includes(room.phase), '라운드가 진행 중입니다.');
         fail(!player.sitOut, '자리 비움을 해제해 주세요.');
+        fail(room.gameType!=='holdem' || player.stack>0, '스택이 없습니다. 방장에게 무료 스택 재설정을 요청해 주세요.');
         player.ready = Boolean(input.ready); this.progress(room); break;
       }
       case 'ack': {
+        fail(room.gameType !== 'holdem', '가상 칩 모드에서는 자신의 차례에 베팅 버튼을 사용해 주세요.');
+        fail(!room.hand?.participants.find(p=>p.id===player.id)?.folded, '폴드한 라운드에서는 관전만 가능합니다.');
         this.guardHand(room, input);
         fail(['private', 'flop', 'turn', 'river'].includes(room.phase), '현재는 확인 버튼을 누를 단계가 아닙니다.');
         fail(room.hand.participants.some(p => p.id === player.id), '다음 라운드부터 참가할 수 있습니다.');
         room.hand.acknowledged.add(player.id); this.progress(room); break;
+      }
+      case 'fold': case 'check': case 'call': case 'raise': case 'allIn': {
+        this.guardHand(room,input);
+        fail(IN_HAND.includes(room.phase), '진행 중인 핸드가 없습니다.');
+        fail(!room.paused, '일시정지 중입니다.');
+        if(room.gameType==='holdem') {
+          fail(input.turnSeq===room.hand.turnSeq, '차례가 갱신되었습니다. 화면을 확인해 주세요.',409);
+          actHand(room.hand,player.id,action,input.amount); this.syncPoker(room);
+        } else {
+          fail(action==='fold','베팅 없는 모드에서는 폴드와 확인만 가능합니다.');
+          this.foldCompare(room,player);
+        }
+        break;
+      }
+      case 'resetStacks': {
+        this.host(room,player); this.guardHand(room,input);
+        fail(room.gameType==='holdem','가상 칩 모드에서만 사용할 수 있습니다.');
+        fail(['lobby','showdown'].includes(room.phase),'핸드가 끝난 뒤 재설정할 수 있습니다.');
+        for(const p of room.players) { if(p.status==='approved') {p.stack=room.initialStack;p.ready=false;} }
+        // Preserve completed public history but discard the old hand snapshot.
+        room.hand=null;room.phase='lobby';room.deadline=room.nextRoundAt=null;
+        this.log(room, `전원 스택을 ${room.initialStack} 가상 칩으로 무료 재설정했습니다.`);
+        break;
       }
       case 'start': {
         this.host(room, player); this.guardHand(room, input);
@@ -249,6 +344,7 @@ export class GameStore {
         fail(!room.paused, '일시정지를 해제해 주세요.'); this.start(room); break;
       }
       case 'advance': {
+        fail(room.gameType !== 'holdem', '베팅이 끝나야 다음 카드가 공개됩니다.');
         this.host(room, player); this.guardHand(room, input);
         fail(!room.paused, '일시정지를 해제해 주세요.');
         fail(['private', 'flop', 'turn', 'river'].includes(room.phase), '공개할 다음 카드가 없습니다.');
@@ -294,8 +390,13 @@ export class GameStore {
         fail(!room.paused, '일시정지를 해제한 뒤 설정해 주세요.');
         fail(['ready', 'timed'].includes(input.mode), '진행 방식이 올바르지 않습니다.');
         const seconds = integer(input.seconds, 5, 60, '공개 간격');
+        const initialStack=integer(input.initialStack ?? room.initialStack,1,1000000,'초기 스택');
+        const sb=integer(input.sb ?? room.sb,1,100000,'SB');
+        const bb=integer(input.bb ?? room.bb,sb,100000,'BB');
+        const actionSeconds=integer(input.actionSeconds ?? room.actionSeconds,10,120,'행동 제한시간');
+        Object.assign(room,{initialStack,sb,bb,actionSeconds});
         room.mode = input.mode; room.seconds = seconds; room.autoNext = Boolean(input.autoNext);
-        room.nextRoundAt = room.phase === 'showdown' && room.autoNext && room.mode === 'timed' ? this.now() + 12_000 : null;
+        room.nextRoundAt = room.gameType!=='holdem' && room.phase === 'showdown' && room.autoNext && room.mode === 'timed' ? this.now() + 12_000 : null;
         break;
       }
       case 'leave': {
@@ -327,6 +428,20 @@ export class GameStore {
       room.players = room.players.filter(p => ['approved', 'pending'].includes(p.status) || room.hand?.participants.some(h => h.id === p.id));
       // All-disconnected rooms stop advancing rather than playing unattended.
       const anyParticipantOnline = room.hand?.participants.some(h => room.players.some(p => p.id === h.id && p.status === 'approved' && p.online));
+      if(room.gameType==='holdem') {
+        if(!room.paused && anyParticipantOnline && IN_HAND.includes(room.phase) && room.deadline && now>=room.deadline) {
+          const a=legalActions(room.hand,room.hand.actorId);
+          if(a) {
+            const actor=room.players.find(p=>p.id===room.hand.actorId);
+            if(actor) actor.sitOut=true;
+            this.log(room, '행동 시간 초과 · 자동 체크/폴드, 다음 핸드 자리 비움');
+            actHand(room.hand,room.hand.actorId,a.check?'check':'fold'); this.syncPoker(room); changed=true;
+          }
+        }
+        if(!room.paused && room.phase==='showdown' && room.autoNext && this.readyForNext(room)) {this.start(room);changed=true;}
+        if(changed) this.notify(room);
+        continue;
+      }
       if (!room.paused && anyParticipantOnline && ['private', 'flop', 'turn', 'river'].includes(room.phase)) {
         if ((room.deadline && now >= room.deadline) || this.canAdvance(room)) { this.advance(room); changed = true; }
       }
@@ -347,12 +462,20 @@ export class GameStore {
       me: { id: viewer.id, name: viewer.name, status: viewer.status }, hostId: room.hostId };
     // Pending membership exposes no roster, board, cards, history or invite secret.
     if (viewer.status !== 'approved') return base;
-    const shown = { lobby: 0, private: 0, flop: 3, turn: 4, river: 5, showdown: 5 }[room.phase];
+    const shown = room.hand?.shown ?? ({ lobby: 0, private: 0, flop: 3, turn: 4, river: 5, showdown: 5 }[room.phase]);
     const host = room.players.find(p => p.id === room.hostId);
     const participants = room.hand?.participants || [];
     const allIds = new Set([...room.players.filter(p => p.status === 'approved').map(p => p.id), ...participants.map(p => p.id)]);
     return {
       ...base, phase: room.phase, round: room.round, handId: room.hand?.id ?? null,
+      version:'2.0.0', gameType:room.gameType, initialStack:room.initialStack, sb:room.sb, bb:room.bb, actionSeconds:room.actionSeconds,
+      poker:room.gameType==='holdem' && room.hand ? {
+        actorId:room.hand.actorId,turnSeq:room.hand.turnSeq,sbSeat:room.hand.sbSeat,bbSeat:room.hand.bbSeat,
+        pot:room.hand.finished?0:potTotal(room.hand),settledPot:room.hand.settledPot ?? 0,currentBet:room.hand.currentBet,
+        ending:room.hand.ending,legal:room.paused?null:legalActions(room.hand,viewer.id),
+        pots:structuredClone(room.hand.finished?room.hand.pots:potLayers(room.hand)),refunds:structuredClone(room.hand.refunds)
+      }:null,
+      ending:room.hand?.ending,
       maxPlayers: room.maxPlayers, mode: room.mode, seconds: room.seconds, autoNext: room.autoNext,
       paused: room.paused, locked: room.locked, deadline: room.deadline, nextRoundAt: room.nextRoundAt,
       dealerSeat: room.dealerSeat, board: room.hand?.board.slice(0, shown) || [],
@@ -365,9 +488,10 @@ export class GameStore {
         return {
           id, name: h?.name ?? p.name, seat: h?.seat ?? p.seat,
           online: p?.status === 'approved' && p.online, left: p?.status !== 'approved',
+          stack:p?.stack ?? h?.stack ?? 0, streetBet:h?.streetBet ?? 0,totalBet:h?.totalBet ?? 0,folded:Boolean(h?.folded),allIn:Boolean(h?.allIn),lastAction:h?.lastAction ?? '',
           ready: Boolean(p?.ready), sitOut: Boolean(p?.sitOut), playing: Boolean(h),
           acknowledged: Boolean(room.hand?.acknowledged.has(id)),
-          cards: h ? (id === viewer.id || room.phase === 'showdown' ? [...h.cards] : [null, null]) : [],
+          cards: h ? (id === viewer.id || (room.phase === 'showdown' && !h.folded && room.hand.ending !== 'folds') ? [...h.cards] : [null, null]) : [],
           stats: p ? { ...p.stats } : { played: 0, wins: 0, ties: 0 }
         };
       }).sort((a, b) => a.seat - b.seat),

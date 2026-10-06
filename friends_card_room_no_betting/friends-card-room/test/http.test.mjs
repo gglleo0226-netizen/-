@@ -15,7 +15,7 @@ async function setup(t) {
   }
   async function act(user, action, more = {}) {
     const state = (await request('/api/state', undefined, user.token)).data;
-    return request('/api/action', { action, requestId: `http_req_${++count}`, handId: state.handId, phase: state.phase, ...more }, user.token);
+    return request('/api/action', { action, requestId: `http_req_${++count}`, handId: state.handId, phase: state.phase, turnSeq:state.poker?.turnSeq, ...more }, user.token);
   }
   return { ...app, origin, request, act };
 }
@@ -92,4 +92,40 @@ test('revoked pending sessions receive no further private state', async t => {
   await f.act(host, 'reject', { playerId: guest.state.me.id });
   assert.equal((await poll).status, 401);
   assert.equal((await f.request('/api/state', undefined, guest.token)).status, 401);
+});
+
+test('v2 HTTP: 9 independent sessions bet, fold, settle, and receive private views', async t => {
+  const f=await setup(t);
+  const host=(await f.request('/api/rooms',{name:'H',gameType:'holdem',maxPlayers:9})).data;
+  const users=[host];
+  for(let i=1;i<9;i++) {const u=(await f.request('/api/join',{room:host.state.roomId,invite:host.state.invite,name:`P${i}`})).data;users.push(u);assert.equal((await f.act(host,'approve',{playerId:u.state.me.id})).status,200);}
+  await Promise.all(users.map(u=>f.act(u,'ready',{ready:true})));
+  assert.equal((await f.act(host,'start')).status,200);
+  let s=(await f.request('/api/state',undefined,host.token)).data;
+  const foldId=s.poker.actorId;
+  const folded=users.find(u=>u.state.me.id===foldId);
+  assert.equal((await f.act(folded,'fold')).status,200);
+  for(let i=0;i<100;i++) {
+    s=(await f.request('/api/state',undefined,host.token)).data;
+    if(s.phase==='showdown') break;
+    const actor=users.find(u=>u.state.me.id===s.poker.actorId);
+    const v=(await f.request('/api/state',undefined,actor.token)).data;
+    assert.equal((await f.act(actor,v.poker.legal.check?'check':'call')).status,200);
+  }
+  const end=await Promise.all(users.map(u=>f.request('/api/state',undefined,u.token)));
+  assert.ok(end.every(r=>r.data.phase==='showdown'));
+  for(const r of end) {
+    assert.equal(r.data.players.reduce((a,p)=>a+p.stack,0),18000);
+    assert.deepEqual(r.data.results.find(p=>p.id===foldId).cards,[]);
+    if(r.data.me.id!==foldId)assert.deepEqual(r.data.players.find(p=>p.id===foldId).cards,[null,null]);
+  }
+});
+test('v2 HTTP: invalid bets return useful 400 without mutation, stale turn returns 409', async t=>{
+  const f=await setup(t),h=(await f.request('/api/rooms',{name:'H',gameType:'holdem',maxPlayers:2})).data;
+  const u=(await f.request('/api/join',{room:h.state.roomId,invite:h.state.invite,name:'U'})).data;
+  await f.act(h,'approve',{playerId:u.state.me.id});await f.act(h,'ready',{ready:true});await f.act(u,'ready',{ready:true});await f.act(h,'start');
+  const s=(await f.request('/api/state',undefined,h.token)).data,actor=[h,u].find(u=>u.state.me.id===s.poker.actorId);
+  const bad=await f.act(actor,'raise',{amount:21});assert.equal(bad.status,400);assert.match(bad.data.error,/최소/);
+  assert.equal((await f.act(actor,'fold',{turnSeq:-1})).status,409);
+  assert.equal((await f.request('/api/state',undefined,h.token)).data.poker.pot,30);
 });

@@ -2,6 +2,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { PokerError } from './lib/holdem.mjs';
 import { GameStore, GameError } from './lib/game.mjs';
 
 const PUBLIC = new URL('./public/', import.meta.url);
@@ -83,7 +84,7 @@ export async function createApp({ rateLimit = true, createPassword = process.env
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://localhost');
-      if (req.method === 'GET' && url.pathname === '/healthz') return send(res, 200, { ok: true });
+      if (req.method === 'GET' && url.pathname === '/healthz') return send(res, 200, { ok: true, version:'2.0.0', game:'friends-card-room' });
       if (req.method === 'GET' && url.pathname === '/robots.txt') {
         res.writeHead(200, { ...SECURITY, 'Content-Type': 'text/plain' }); return res.end('User-agent: *\nDisallow: /\n');
       }
@@ -130,8 +131,8 @@ export async function createApp({ rateLimit = true, createPassword = process.env
       }
       return send(res, 404, { error: '지원하지 않는 API 경로입니다.' });
     } catch (err) {
-      if (!(err instanceof GameError)) console.error('[request error]', err);
-      return send(res, err.status || 500, { error: err instanceof GameError ? err.message : '서버에서 오류가 발생했습니다. 다시 시도해 주세요.' });
+      if (!(err instanceof GameError) && !(err instanceof PokerError)) console.error('[request error]', err);
+      return send(res, err.status || (err instanceof PokerError ? 400 : 500), { error: (err instanceof GameError || err instanceof PokerError) ? err.message : '서버에서 오류가 발생했습니다. 다시 시도해 주세요.' });
     }
   });
   server.requestTimeout = 30_000;

@@ -1,15 +1,15 @@
 {
   "name": "friends-card-room",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "초대 전용 2–9인 카드 비교 게임. 베팅, 칩, 결제 없음.",
+  "description": "초대 전용 2–9인 가상 칩 홀덤 및 카드 비교. 칩 구매·환전·현금성 보상 없음.",
   "engines": {
     "node": "22.x || 24.x"
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/cards.test.mjs test/game.test.mjs test/http.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "test:exhaustive": "node test/exhaustive.mjs"
   },
   "license": "MIT"
