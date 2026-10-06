@@ -1,0 +1,28 @@
+{
+  "project": "friends-card-room",
+  "version": "1.0.0",
+  "nodeTest": {
+    "passed": 53,
+    "failed": 0
+  },
+  "fiveCardEnumeration": {
+    "hands": 2598960,
+    "passed": true
+  },
+  "browserHarness": {
+    "passed": 8,
+    "checks": [
+      "Isolated desktop and mobile browser UI: create, invite, pending approval, join",
+      "Nine real backend sessions receive recipient-filtered private cards",
+      "1440px desktop and 390px mobile render with no horizontal overflow",
+      "Recreated browser page with retained session token restores the same hand and seat",
+      "Pause and resume work through UI without losing acknowledgements",
+      "Nine-player showdown displays player names, hand categories and best five cards",
+      "Host settings form changes server-side mode and timer",
+      "360px home screen fits viewport"
+    ],
+    "errors": [],
+    "scope": "Chromium UI loaded via set_content; fetch bridged to a real local Node HTTP server because managed-browser URL navigation is disabled. Real remote deployment and native browser localStorage/network were not tested."
+  },
+  "renderDeployed": false
+}

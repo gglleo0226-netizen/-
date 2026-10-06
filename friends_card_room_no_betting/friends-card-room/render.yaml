@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: friends-card-room
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm test
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production

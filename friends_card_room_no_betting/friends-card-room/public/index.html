@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1816"><meta name="robots" content="noindex,nofollow">
+  <title>친구들의 카드룸 · 베팅 없는 온라인 카드 게임</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#app">본문으로</a>
+  <header class="site-header"><a href="/" class="brand" aria-label="카드룸 홈"><span class="brand-icon" aria-hidden="true">♧</span><span>친구들의 <b>카드룸</b><small>PRIVATE TABLE · NO BETTING</small></span></a><span id="connection" class="connection">초대받은 친구들과 함께</span></header>
+  <main id="app">
+    <section id="home">
+      <div class="hero"><div><p class="eyebrow">같은 테이블, 서로 다른 화면.</p><h1>카드는 나누고,<br>재미는 함께.</h1><p class="hero-copy">각자의 카드 2장, 함께 보는 카드 5장.<br>마지막에 누가 가장 강한 조합을 만들었는지 확인해요.</p><div class="pills"><span>2–9명</span><span>초대 · 입장 승인</span><span>베팅 · 칩 없음</span></div></div><div class="hero-cards" aria-hidden="true"><div class="hero-card one">A<span>♠</span></div><div class="hero-card two">K<span>♥</span></div><div class="hero-circle">JUST<br>FOR FUN</div></div></div>
+      <div class="home-grid">
+        <section class="panel form-panel"><p class="eyebrow">HOST A TABLE</p><h2>새로운 방 만들기</h2><form id="create-form">
+          <label>내 닉네임<input name="name" placeholder="친구들이 알아볼 이름" maxlength="16" required autocomplete="nickname"></label>
+          <label>방 이름<input name="title" value="친구들의 카드룸" maxlength="30" required></label>
+          <div class="form-row"><label>최대 인원<select name="maxPlayers"><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option><option>9</option></select></label><label>진행 방식<select name="mode"><option value="ready">모두 확인하면 공개</option><option value="timed">시간이 지나면 공개</option></select></label></div>
+          <label class="timed-option" hidden>자동 공개 간격<select name="seconds"><option value="5">5초</option><option value="10" selected>10초</option><option value="15">15초</option><option value="30">30초</option><option value="60">60초</option></select></label>
+          <label class="check-label"><input type="checkbox" name="autoNext"><span>다음 라운드 자동 시작<small>확인 모드: 전원 준비 시 / 시간 모드: 결과 표시 12초 후</small></span></label>
+          <details class="advanced"><summary>운영자 비밀번호</summary><label>방 생성 비밀번호<input type="password" name="password" autocomplete="off" placeholder="운영자가 설정했을 때만 입력"></label></details>
+          <button class="button primary full" type="submit">방 만들기 <span aria-hidden="true">↗</span></button>
+        </form></section>
+        <section class="panel form-panel"><p class="eyebrow">JOIN YOUR FRIENDS</p><h2>초대받은 방 들어가기</h2><form id="join-form">
+          <label>초대 링크<input name="link" type="text" placeholder="방장이 보낸 전체 초대 링크 붙여넣기" required autocomplete="off" spellcheck="false"></label>
+          <p class="field-help" id="invite-detected">링크를 열고 들어왔다면 자동으로 입력돼요.</p>
+          <label>내 닉네임<input name="name" placeholder="방장이 알아볼 이름" maxlength="16" required autocomplete="nickname"></label>
+          <button class="button secondary full" type="submit">입장 요청하기 <span aria-hidden="true">→</span></button>
+        </form><div class="how-it-works"><h3>입장한 뒤에는</h3><p><span>01</span> 방장이 요청을 승인해요.</p><p><span>02</span> 모두 ‘준비하기’를 눌러요.</p><p><span>03</span> 카드를 확인하고 결과를 함께 봐요.</p></div></section>
+      </div>
+      <p class="storage-note">회원가입과 결제는 없어요. 서버가 재시작되면 방과 기록이 초기화되는 간단한 실시간 버전이에요.</p>
+    </section>
+    <section id="room" hidden><div id="room-head"></div><div id="waiting"></div><div id="game" hidden><div class="game-layout"><div class="table-column"><div id="table-top"></div><section id="table" class="table" aria-label="카드 테이블"></section><section id="my-area"></section><section id="result-area"></section><section id="controls" class="panel"></section></div><aside class="side-column"><section id="invite-panel" class="panel"></section><section id="roster" class="panel"></section><section id="pending" class="panel" hidden></section><section id="host-panel" class="panel" hidden></section><section class="panel"><details id="rules"><summary>카드 조합 · 게임 방법</summary><div class="rules-body"><p>내 카드 2장과 공통 카드 5장 중 가장 강한 5장을 사용해요. 내 카드를 0장, 1장, 2장 사용해도 돼요.</p><ol><li>스트레이트 플러시</li><li>포 카드</li><li>풀 하우스</li><li>플러시</li><li>스트레이트</li><li>트리플</li><li>투 페어</li><li>원 페어</li><li>하이 카드</li></ol><p>A는 가장 높게, 또는 A–2–3–4–5에서 가장 낮게 사용할 수 있어요. 같은 조합은 나머지 카드의 숫자로 비교하며, 무늬로 우열을 정하지 않아요.</p><p>D는 카드 배분의 기준 자리예요. 다음 라운드마다 참가 중인 다음 자리로 이동해요. 칩·블라인드·베팅은 없어요.</p></div></details></section><section class="panel"><details id="history-details"><summary>최근 기록 <span id="history-count"></span></summary><div id="history"></div><button class="button subtle full" data-action="export">공개 결과 저장</button></details></section><section class="panel"><details id="log-details"><summary>진행 기록</summary><div id="log"></div></details></section></aside></div></div></section>
+  </main>
+  <footer>친구들의 카드룸 <span>한 기기에서 한 자리 · 비공개 초대 · 현금 및 보상 없음</span></footer>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="confirm-dialog"><form method="dialog"><h2 id="confirm-title">확인</h2><p id="confirm-body"></p><div class="dialog-actions"><button value="cancel" class="button secondary">취소</button><button value="ok" class="button primary">확인</button></div></form></dialog>
+  <dialog id="copy-dialog"><form method="dialog"><h2>초대 링크</h2><p>아래 링크 전체를 복사해서 친구에게 보내 주세요.</p><textarea id="copy-text" readonly rows="4"></textarea><button class="button primary full">닫기</button></form></dialog>
+  <noscript>이 게임을 사용하려면 브라우저에서 JavaScript를 허용해 주세요.</noscript>
+</body>
+</html>
